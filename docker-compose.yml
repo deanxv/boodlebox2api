@@ -1,0 +1,15 @@
+version: '3.4'
+
+services:
+  boodlebox2api:
+    image: deanxv/boodlebox2api:latest
+    container_name: boodlebox2api
+    restart: always
+    ports:
+      - "10066:10066"
+    volumes:
+      - ./data:/app/boodlebox2api/data
+    environment:
+      - BB_COOKIE=******  # cookie (多个请以,分隔)
+      - API_SECRET=123456  # [可选]接口密钥-修改此行为请求头校验的值(多个请以,分隔)
+      - TZ=Asia/Shanghai
