@@ -2,6 +2,7 @@ package controller
 
 import (
 	"boodlebox2api/common"
+	"boodlebox2api/common/config"
 	logger "boodlebox2api/common/loggger"
 	"boodlebox2api/cycletls"
 	"boodlebox2api/model"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -71,15 +73,30 @@ var modelToAssistantID = map[string]string{
 
 // NewBoodleClient 创建一个新的BoodleClient
 func NewBoodleClient(cookie, userID, assistantID, chatID string) *BoodleClient {
+	// 创建HTTP客户端并配置代理
+	httpClient := &http.Client{
+		Timeout: 60 * time.Second,
+	}
+
+	// 如果配置了代理URL，则设置代理
+	if config.ProxyUrl != "" {
+		proxyURL, err := url.Parse(config.ProxyUrl)
+		if err == nil {
+			httpClient.Transport = &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+			}
+		} else {
+			log.Printf("解析代理URL失败: %v", err)
+		}
+	}
+
 	return &BoodleClient{
 		Cookie:      cookie,
 		UserID:      userID,
 		AssistantID: assistantID,
 		ChatID:      chatID,
 		UserAgent:   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-		HttpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		HttpClient:  httpClient,
 	}
 }
 
@@ -115,10 +132,6 @@ func (c *BoodleClient) ImagesForOpenAI(ctx *gin.Context) {
 		})
 		return
 	}
-
-	// 创建带超时的上下文
-	//reqCtx, cancel := context.WithTimeout(ctx.Request.Context(), 120*time.Second)
-	//defer cancel()
 
 	// 生成图像
 	result, err := c.GenerateImage(ctx, req.Prompt, assistantID)
@@ -268,7 +281,6 @@ func (c *BoodleClient) GenerateImage(reqCtx *gin.Context, prompt string, assista
 
 							if ok {
 								logger.Debug(reqCtx, fmt.Sprintf("找到图像URL: %s", imageUrl))
-								//fmt.Println(fmt.Sprintf("找到图像URL: %s", imageUrl))
 								result := &ImageResult{
 									URL: imageUrl,
 								}
@@ -426,15 +438,13 @@ func (c *BoodleClient) GetWSTicket(ctx *gin.Context) (string, error) {
 	}
 
 	ticket := strings.Trim(string(body), "\"")
-	logger.Debug(ctx.Request.Context(), fmt.Sprintf("收到图像生成请求: %+v", req))
-
 	logger.Debug(ctx, fmt.Sprintf("获取到ticket: %s", ticket))
 	return ticket, nil
 }
 
 // ConnectWebSocket 连接WebSocket
 func (c *BoodleClient) ConnectWebSocket(ctx *gin.Context, ticket string) (*websocket.Conn, error) {
-	url := fmt.Sprintf("wss://box.boodle.ai/api/v2/parrot/connect/user/%s/ticket/%s", c.UserID, ticket)
+	wsURL := fmt.Sprintf("wss://box.boodle.ai/api/v2/parrot/connect/user/%s/ticket/%s", c.UserID, ticket)
 
 	header := http.Header{}
 	header.Add("Origin", "https://box.boodle.ai")
@@ -444,11 +454,22 @@ func (c *BoodleClient) ConnectWebSocket(ctx *gin.Context, ticket string) (*webso
 	header.Add("User-Agent", c.UserAgent)
 	header.Add("Cookie", c.Cookie)
 
+	// 创建WebSocket拨号器
 	dialer := websocket.Dialer{
 		EnableCompression: true,
 	}
 
-	conn, _, err := dialer.Dial(url, header)
+	// 如果配置了代理URL，则设置代理
+	if config.ProxyUrl != "" {
+		proxyURL, err := url.Parse(config.ProxyUrl)
+		if err == nil {
+			dialer.Proxy = http.ProxyURL(proxyURL)
+		} else {
+			log.Printf("解析代理URL失败: %v", err)
+		}
+	}
+
+	conn, _, err := dialer.Dial(wsURL, header)
 	if err != nil {
 		return nil, fmt.Errorf("无法连接到WebSocket: %v", err)
 	}
