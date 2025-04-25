@@ -63,16 +63,16 @@ type ErrorResponse struct {
 }
 
 // 模型到assistantId的映射
-var modelToAssistantID = map[string]string{
-	"dall-e-3":             "ec252a5c-cd59-4ca5-b92b-6ee6e6864ebc",
-	"flux-pro":             "fabc04cf-662f-4af0-9b55-2fece45a51e7",
-	"ideogram-v2":          "1e678939-395d-4921-b6ce-d4be3d2e72c4",
-	"stable-diffusion-3.5": "9f382632-43b1-41a4-b85f-9a599ea3caf5",
-	"stable-diffusion-xl":  "9fa7e69d-ee00-471c-bb9b-2f553588325a",
-}
+//var modelToAssistantID = map[string]string{
+//	"dall-e-3":             "ec252a5c-cd59-4ca5-b92b-6ee6e6864ebc",
+//	"flux-pro":             "fabc04cf-662f-4af0-9b55-2fece45a51e7",
+//	"ideogram-v2":          "1e678939-395d-4921-b6ce-d4be3d2e72c4",
+//	"stable-diffusion-3.5": "9f382632-43b1-41a4-b85f-9a599ea3caf5",
+//	"stable-diffusion-xl":  "9fa7e69d-ee00-471c-bb9b-2f553588325a",
+//}
 
 // NewBoodleClient 创建一个新的BoodleClient
-func NewBoodleClient(cookie, userID, assistantID, chatID string) *BoodleClient {
+func NewBoodleClient(cookie, userID, chatID string) *BoodleClient {
 	// 创建HTTP客户端并配置代理
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
@@ -91,12 +91,11 @@ func NewBoodleClient(cookie, userID, assistantID, chatID string) *BoodleClient {
 	}
 
 	return &BoodleClient{
-		Cookie:      cookie,
-		UserID:      userID,
-		AssistantID: assistantID,
-		ChatID:      chatID,
-		UserAgent:   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-		HttpClient:  httpClient,
+		Cookie:     cookie,
+		UserID:     userID,
+		ChatID:     chatID,
+		UserAgent:  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+		HttpClient: httpClient,
 	}
 }
 
@@ -117,9 +116,9 @@ func (c *BoodleClient) ImagesForOpenAI(ctx *gin.Context) {
 	}
 
 	logger.Debug(ctx.Request.Context(), fmt.Sprintf("收到图像生成请求: %+v", req))
-
 	// 从模型映射获取assistantId
-	assistantID, ok := modelToAssistantID[req.Model]
+	modelInfo, ok := common.GetModelInfo(req.Model)
+	assistantID := modelInfo.Id
 	if !ok {
 		ctx.JSON(http.StatusBadRequest, ErrorResponse{
 			Error: struct {
@@ -202,6 +201,17 @@ func safeClose(client cycletls.CycleTLS) {
 
 // GenerateImage 生成图像
 func (c *BoodleClient) GenerateImage(reqCtx *gin.Context, prompt string, assistantID string) (*ImageResult, error) {
+	// 如果ChatID为空，创建一个新的聊天
+	chatID := c.ChatID
+	if chatID == "" {
+		var err error
+		chatID, err = c.CreateNewChat()
+		if err != nil {
+			return nil, fmt.Errorf("创建新聊天失败: %v", err)
+		}
+		logger.Debug(reqCtx, fmt.Sprintf("已为本次请求创建新聊天，ID: %s", chatID))
+	}
+
 	// 获取WebSocket票据
 	ticket, err := c.GetWSTicket(reqCtx)
 	if err != nil {
@@ -221,7 +231,7 @@ func (c *BoodleClient) GenerateImage(reqCtx *gin.Context, prompt string, assista
 
 	// 先发送消息，获取submissionID
 	promptMessage := fmt.Sprintf("%s", prompt)
-	submissionID, err := c.SendMessage(reqCtx, promptMessage, assistantID)
+	submissionID, err := c.SendMessage(reqCtx, promptMessage, assistantID, chatID)
 	if err != nil {
 		return nil, fmt.Errorf("发送消息失败: %v", err)
 	}
@@ -237,6 +247,8 @@ func (c *BoodleClient) GenerateImage(reqCtx *gin.Context, prompt string, assista
 				errorChan <- fmt.Errorf("WebSocket读取错误: %v", err)
 				return
 			}
+
+			logger.Debug(reqCtx, fmt.Sprintf("message: %s", message))
 
 			// 解析消息为通用结构
 			var msg map[string]interface{}
@@ -301,12 +313,12 @@ func (c *BoodleClient) GenerateImage(reqCtx *gin.Context, prompt string, assista
 	}()
 
 	// 发送活跃状态
-	if err := c.SendActiveStatus(reqCtx, conn); err != nil {
+	if err := c.SendActiveStatus(reqCtx, conn, chatID); err != nil {
 		return nil, fmt.Errorf("发送活跃状态失败: %v", err)
 	}
 
 	// 检查消息状态
-	if err := c.CheckMessageStatus(submissionID); err != nil {
+	if err := c.CheckMessageStatus(submissionID, chatID); err != nil {
 		return nil, fmt.Errorf("检查消息状态失败: %v", err)
 	}
 
@@ -322,8 +334,8 @@ func (c *BoodleClient) GenerateImage(reqCtx *gin.Context, prompt string, assista
 }
 
 // SendMessage 发送消息
-func (c *BoodleClient) SendMessage(ctx *gin.Context, message string, assistantID string) (string, error) {
-	httpURL := fmt.Sprintf("https://box.boodle.ai/api/chat/%s/message", c.ChatID)
+func (c *BoodleClient) SendMessage(ctx *gin.Context, message string, assistantID string, chatID string) (string, error) {
+	httpURL := fmt.Sprintf("https://box.boodle.ai/api/chat/%s/message", chatID)
 	httpRequestBody := map[string]interface{}{
 		"mentions": []interface{}{},
 		"message": map[string]interface{}{
@@ -347,7 +359,7 @@ func (c *BoodleClient) SendMessage(ctx *gin.Context, message string, assistantID
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://box.boodle.ai")
-	req.Header.Set("Referer", fmt.Sprintf("https://box.boodle.ai/c/%s", c.ChatID))
+	req.Header.Set("Referer", fmt.Sprintf("https://box.boodle.ai/c/%s", chatID))
 	req.Header.Set("Cookie", c.Cookie)
 	req.Header.Set("Vary", "*")
 
@@ -376,9 +388,9 @@ func (c *BoodleClient) SendMessage(ctx *gin.Context, message string, assistantID
 }
 
 // SendActiveStatus 发送活跃状态
-func (c *BoodleClient) SendActiveStatus(ctx *gin.Context, conn *websocket.Conn) error {
+func (c *BoodleClient) SendActiveStatus(ctx *gin.Context, conn *websocket.Conn, chatID string) error {
 	activeMsg := map[string]interface{}{
-		"chatId": c.ChatID,
+		"chatId": chatID,
 		"type":   "ChatMemberActive",
 		"userId": c.UserID,
 	}
@@ -388,8 +400,8 @@ func (c *BoodleClient) SendActiveStatus(ctx *gin.Context, conn *websocket.Conn) 
 }
 
 // CheckMessageStatus 检查消息状态
-func (c *BoodleClient) CheckMessageStatus(submissionID string) error {
-	statusURL := fmt.Sprintf("https://box.boodle.ai/api/chat/%s/message/%s", c.ChatID, submissionID)
+func (c *BoodleClient) CheckMessageStatus(submissionID string, chatID string) error {
+	statusURL := fmt.Sprintf("https://box.boodle.ai/api/chat/%s/message/%s", chatID, submissionID)
 
 	req, err := http.NewRequest("GET", statusURL, nil)
 	if err != nil {
@@ -399,7 +411,7 @@ func (c *BoodleClient) CheckMessageStatus(submissionID string) error {
 	req.Header.Set("User-Agent", c.UserAgent)
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Cookie", c.Cookie)
-	req.Header.Set("Referer", fmt.Sprintf("https://box.boodle.ai/c/%s", c.ChatID))
+	req.Header.Set("Referer", fmt.Sprintf("https://box.boodle.ai/c/%s", chatID))
 
 	resp, err := c.HttpClient.Do(req)
 	if err != nil {
@@ -408,6 +420,74 @@ func (c *BoodleClient) CheckMessageStatus(submissionID string) error {
 	defer resp.Body.Close()
 
 	return nil
+}
+
+// CreateNewChat 创建一个新的聊天
+func (c *BoodleClient) CreateNewChat() (string, error) {
+	url := "https://box.boodle.ai/api/chat"
+
+	// 请求体
+	requestBody := map[string]interface{}{
+		"knowledgeIds": []string{},
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("序列化请求体失败: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return "", fmt.Errorf("创建请求失败: %v", err)
+	}
+
+	// 设置请求头
+	req.Header.Set("accept", "application/json, text/plain, */*")
+	req.Header.Set("accept-language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("cache-control", "no-cache")
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("origin", "https://box.boodle.ai")
+	req.Header.Set("referer", "https://box.boodle.ai/launch/chat")
+	req.Header.Set("sec-ch-ua", "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"")
+	req.Header.Set("sec-ch-ua-mobile", "?0")
+	req.Header.Set("sec-ch-ua-platform", "\"macOS\"")
+	req.Header.Set("sec-fetch-dest", "empty")
+	req.Header.Set("sec-fetch-mode", "cors")
+	req.Header.Set("sec-fetch-site", "same-origin")
+	req.Header.Set("user-agent", c.UserAgent)
+	req.Header.Set("vary", "*")
+	req.Header.Set("Cookie", c.Cookie)
+
+	resp, err := c.HttpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("发送请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("请求失败，状态码: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var response struct {
+		Chat struct {
+			ID string `json:"id"`
+		} `json:"chat"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	if response.Chat.ID == "" {
+		return "", fmt.Errorf("响应中没有聊天ID")
+	}
+
+	return response.Chat.ID, nil
 }
 
 // GetWSTicket 获取WebSocket票据

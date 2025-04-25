@@ -29,7 +29,6 @@ func SetApiRouter(router *gin.Engine) {
 	client := controller.NewBoodleClient(
 		config.BBCookie,
 		config.UserId,
-		"9a423ed0-99b7-439a-8a2c-38deb60127c3",
 		config.ImageChatId,
 	)
 
