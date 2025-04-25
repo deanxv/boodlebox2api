@@ -30,7 +30,7 @@ func SetApiRouter(router *gin.Engine) {
 		config.BBCookie,
 		config.UserId,
 		"9a423ed0-99b7-439a-8a2c-38deb60127c3",
-		"10916fd0-ad20-4460-8f1b-62618d7106d1",
+		config.ImageChatId,
 	)
 
 	v1Router := router.Group(fmt.Sprintf("%s/v1", ProcessPath(config.RoutePrefix)))
