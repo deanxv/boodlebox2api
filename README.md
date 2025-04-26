@@ -19,11 +19,8 @@ _觉得有点意思的话 别忘了点个 ⭐_
 
 ## 功能
 
-- [x] 支持对话接口(流式/非流式)(`/chat/completions`),详情查看[支持模型](#支持模型)
-- [x] 支持识别**图片**多轮对话
+- [x] 支持文生图接口(`/images/generations`),详情查看[支持模型](#支持模型)
 - [x] 支持自定义请求头校验值(Authorization)
-- [x] 支持cookie池(随机),详情查看[获取cookie](#cookie获取方式)
-- [x] 支持请求失败自动切换cookie重试(需配置cookie池)
 - [x] 可配置代理请求(环境变量`PROXY_URL`)
 
 ### 接口文档:
@@ -48,6 +45,8 @@ _觉得有点意思的话 别忘了点个 ⭐_
 
 ## 部署
 
+[点击查看部分环境变量获取方式](#环境变量获取方式)
+
 ### 基于 Docker-Compose(All In One) 进行部署
 
 ```shell
@@ -69,7 +68,8 @@ services:
     volumes:
       - ./data:/app/boodlebox2api/data
     environment:
-      - BB_COOKIE=******  # cookie (多个请以,分隔)
+      - BB_COOKIE=******  # cookie 
+      - USER_ID=******  # 用户ID
       - API_SECRET=123456  # [可选]接口密钥-修改此行为请求头校验的值(多个请以,分隔)
       - TZ=Asia/Shanghai
 ```
@@ -81,12 +81,13 @@ docker run --name boodlebox2api -d --restart always \
 -p 10066:10066 \
 -v $(pwd)/data:/app/boodlebox2api/data \
 -e BB_COOKIE=***** \
+-e USER_ID=***** \
 -e API_SECRET="123456" \
 -e TZ=Asia/Shanghai \
 deanxv/boodlebox2api
 ```
 
-其中`API_SECRET`、`BB_COOKIE`修改为自己的。
+其中`API_SECRET`、`BB_COOKIE`、`USER_ID`修改为自己的。
 
 如果上面的镜像无法拉取,可以尝试使用 GitHub 的 Docker 镜像,将上面的`deanxv/boodlebox2api`替换为
 `ghcr.io/deanxv/boodlebox2api`即可。
@@ -107,9 +108,11 @@ deanxv/boodlebox2api
 4. Deploy 会自动开始,先取消。
 5. 添加环境变量
 
-   `BB_COOKIE:******`  cookie (多个请以,分隔)
+   `BB_COOKIE=******`  cookie 
 
-   `API_SECRET:123456` [可选]接口密钥-修改此行为请求头校验的值(多个请以,分隔)(与openai-API-KEY用法一致)
+   `USER_ID=******`  用户id 
+
+   `API_SECRET=123456` [可选]接口密钥-修改此行为请求头校验的值(多个请以,分隔)(与openai-API-KEY用法一致)
 
 保存。
 
@@ -138,27 +141,23 @@ Render 可以直接部署 docker 镜像,不需要 fork 仓库：[Render](https:/
 1. `PORT=10066`  [可选]端口,默认为10066
 2. `DEBUG=true`  [可选]DEBUG模式,可打印更多信息[true:打开、false:关闭]
 3. `API_SECRET=123456`  [可选]接口密钥-修改此行为请求头(Authorization)校验的值(同API-KEY)(多个请以,分隔)
-4. `BB_COOKIE=******`  cookie (多个请以,分隔)
-5. `REQUEST_RATE_LIMIT=60`  [可选]每分钟下的单ip请求速率限制,默认:60次/min
-6. `PROXY_URL=http://127.0.0.1:10801`  [可选]代理
-6. `USER_AGENT=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome`  [可选]请求标识,用自己的(可能)防封,默认使用作者的。
-7. `ROUTE_PREFIX=hf`  [可选]路由前缀,默认为空,添加该变量后的接口示例:`/hf/v1/chat/completions`
-8. `RATE_LIMIT_COOKIE_LOCK_DURATION=600`  [可选]到达速率限制的cookie禁用时间,默认为60s
+4. `BB_COOKIE=******`  cookie 
+5. `USER_ID=******`  用户id 
+6. `IMAGE_CHAT_ID=******`  [可选]生图默认对话id,默认为空
+7. `REQUEST_RATE_LIMIT=60`  [可选]每分钟下的单ip请求速率限制,默认:60次/min
+8. `PROXY_URL=http://127.0.0.1:10801`  [可选]代理
+9. `ROUTE_PREFIX=hf`  [可选]路由前缀,默认为空,添加该变量后的接口示例:`/hf/v1/chat/completions`
 
-### cookie获取方式
+### 环境变量获取方式
 
-1. 打开[kilocode](https://kilocode.ai/profile)。
+1. 打开[boodle](https://box.boodle.ai/launch/chat)。
 2. 打开**F12**开发者工具。
-3. 使用Google登录
-<span><img src="docs/img.png" width="800"/></span>
-4. 右侧开发者工具-控制台，执行如下代码。
-
-```
-document.querySelector('a[href^="vscode://kilocode.kilo-code/kilocode?token="]').href.split('token=')[1]
-```
-
-5. 打印的值即所需cookie值,即环境变量`BB_COOKIE`。
-<span><img src="docs/img2.png" width="800"/></span>
+3. 发起对话。
+4. `member`接口中`id`即是对话id,可将其配置为环境变量`IMAGE_CHAT_ID`,
+   `createdBy`即是用户id,配置为环境变量`BB_COOKIE`
+  ![img.png](docs/img.png)
+5. `member`接口中`header`中的`Cookie`即环境变量`BB_COOKIE`的值(较为关键的是图中蓝色高亮的内容)。
+  ![img.png](docs/img_1.png)
 
 ## 进阶配置
 
@@ -166,21 +165,15 @@ document.querySelector('a[href^="vscode://kilocode.kilo-code/kilocode?token="]')
 
 ## 支持模型
 
-> 新用户绑卡即可获赠 $20 使用额度。如未自动到账，请前往[官方 Discord 服务器](https://discord.com/invite/Ja6BkfyTzJ)，在[指定频道](https://discord.com/channels/1349288496988160052/1355527689272033391)提交注册邮箱，审核通过后额度将添加至账户。
+> 新用户走[AFF](https://boodle.cello.so/8li1JggXfUg)可首次可免费开通PRO订阅。
 
-| 模型名称                                | 
-|-------------------------------------|
-| claude-3-7-sonnet-20250219          |
-| claude-3-7-sonnet-20250219-thinking |
-| gemini-2.5-pro-preview-03-25        |
-| gpt-4.1                             |
-
-> 可通过下图获取并保存`__Secure-next-auth.session-token`随时在[kilo查询平台](https://kl.aytsao.cn/)查询余额。
-
-<span><img src="docs/img1.png" width="400"/></span>
-
-<span><img src="docs/img3.png" width="400"/></span>
-
+| 模型名称(生图)             | 
+|----------------------|
+| dall-e-3             |
+| flux-pro             |
+| ideogram-v2          |
+| stable-diffusion-3.5 |
+| stable-diffusion-xl  |
 
 ## 报错排查
 
@@ -188,4 +181,4 @@ document.querySelector('a[href^="vscode://kilocode.kilo-code/kilocode?token="]')
 
 ## 其他
 
-略
+> 新用户通过[boodleAI](https://boodle.cello.so/8li1JggXfUg)注册可首次可**免费**开通PRO订阅。

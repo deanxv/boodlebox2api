@@ -508,7 +508,12 @@ func (c *BoodleClient) GetWSTicket(ctx *gin.Context) (string, error) {
 
 	resp, err := c.HttpClient.Do(req)
 	if err != nil {
+		logger.Errorf(ctx, "获取ticket失败: %v", err)
 		return "", fmt.Errorf("获取ticket失败: %v", err)
+	}
+	if resp.StatusCode == 401 {
+		logger.Errorf(ctx, resp.Status)
+		return "", fmt.Errorf("获取ticket失败: %v", "401 Unauthorized")
 	}
 	defer resp.Body.Close()
 
@@ -561,4 +566,149 @@ func (c *BoodleClient) ConnectWebSocket(ctx *gin.Context, ticket string) (*webso
 type ImageResult struct {
 	URL           string
 	RevisedPrompt string
+}
+
+func (c *BoodleClient) ChatForOpenAI(ctx *gin.Context) {
+	var openAIReq model.OpenAIChatCompletionRequest
+	if err := ctx.BindJSON(&openAIReq); err != nil {
+		logger.Errorf(ctx.Request.Context(), err.Error())
+		ctx.JSON(http.StatusInternalServerError, model.OpenAIErrorResponse{
+			OpenAIError: model.OpenAIError{
+				Message: "Invalid request parameters",
+				Type:    "request_error",
+				Code:    "500",
+			},
+		})
+		return
+	}
+
+	if len(openAIReq.GetUserContent()) == 0 {
+		logger.Errorf(ctx.Request.Context(), "user content is null")
+		ctx.JSON(http.StatusInternalServerError, model.OpenAIErrorResponse{
+			OpenAIError: model.OpenAIError{
+				Message: "Invalid request parameters",
+				Type:    "request_error",
+				Code:    "500",
+			},
+		})
+		return
+	}
+
+	prompt := openAIReq.GetUserContent()[0]
+
+	logger.Debug(ctx.Request.Context(), fmt.Sprintf("收到图像生成请求: %+v", openAIReq))
+	// 从模型映射获取assistantId
+	modelInfo, ok := common.GetModelInfo(openAIReq.Model)
+	assistantID := modelInfo.Id
+	if !ok {
+		ctx.JSON(http.StatusBadRequest, ErrorResponse{
+			Error: struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+			}{
+				Message: "不支持的模型",
+				Type:    "invalid_request_error",
+			},
+		})
+		return
+	}
+
+	// 生成图像
+	result, err := c.GenerateImage(ctx, prompt, assistantID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+			}{
+				Message: err.Error(),
+				Type:    "api_error",
+			},
+		})
+		return
+	}
+	responseId := fmt.Sprintf(responseIDFormat, time.Now().Format("20060102150405"))
+	result.URL = fmt.Sprintf("![Image](%s)", result.URL)
+
+	if openAIReq.Stream {
+		streamResp := createStreamResponse(responseId, openAIReq.Model, model.OpenAIDelta{Content: result.URL, Role: "assistant"}, nil)
+		err := sendSSEvent(ctx, streamResp)
+		if err != nil {
+			logger.Errorf(ctx.Request.Context(), err.Error())
+			ctx.JSON(http.StatusInternalServerError, model.OpenAIErrorResponse{
+				OpenAIError: model.OpenAIError{
+					Message: err.Error(),
+					Type:    "request_error",
+					Code:    "500",
+				},
+			})
+			return
+		}
+		ctx.SSEvent("", " [DONE]")
+		return
+	} else {
+
+		//jsonBytes, _ := json.Marshal(openAIReq.Messages)
+		//promptTokens := common.CountTokenText(string(jsonBytes), openAIReq.Model)
+		//completionTokens := common.CountTokenText(strings.Join(content, "\n"), openAIReq.Model)
+
+		finishReason := "stop"
+		// 创建并返回 OpenAIChatCompletionResponse 结构
+		resp := model.OpenAIChatCompletionResponse{
+			ID:      fmt.Sprintf(responseIDFormat, time.Now().Format("20060102150405")),
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Model:   openAIReq.Model,
+			Choices: []model.OpenAIChoice{
+				{
+					Message: model.OpenAIMessage{
+						Role:    "assistant",
+						Content: result.URL,
+					},
+					FinishReason: &finishReason,
+				},
+			},
+			Usage: model.OpenAIUsage{
+				//PromptTokens:     promptTokens,
+				//CompletionTokens: completionTokens,
+				//TotalTokens:      promptTokens + completionTokens,
+			},
+		}
+		ctx.JSON(200, resp)
+		return
+	}
+}
+
+func sendSSEvent(c *gin.Context, response model.OpenAIChatCompletionResponse) error {
+	jsonResp, err := json.Marshal(response)
+	if err != nil {
+		logger.Errorf(c.Request.Context(), "Failed to marshal response: %v", err)
+		return err
+	}
+	c.SSEvent("", " "+string(jsonResp))
+	c.Writer.Flush()
+	return nil
+}
+
+func createStreamResponse(responseId, modelName string, delta model.OpenAIDelta, finishReason *string) model.OpenAIChatCompletionResponse {
+	//promptTokens := common.CountTokenText(string(jsonData), modelName)
+	//completionTokens := common.CountTokenText(delta.Content, modelName)
+	return model.OpenAIChatCompletionResponse{
+		ID:      responseId,
+		Object:  "chat.completion.chunk",
+		Created: time.Now().Unix(),
+		Model:   modelName,
+		Choices: []model.OpenAIChoice{
+			{
+				Index:        0,
+				Delta:        delta,
+				FinishReason: finishReason,
+			},
+		},
+		Usage: model.OpenAIUsage{
+			//PromptTokens:     promptTokens,
+			//CompletionTokens: completionTokens,
+			//TotalTokens:      promptTokens + completionTokens,
+		},
+	}
 }

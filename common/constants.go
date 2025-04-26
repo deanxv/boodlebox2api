@@ -3,7 +3,7 @@ package common
 import "time"
 
 var StartTime = time.Now().Unix() // unit: second
-var Version = "v1.0.1"            // this hard coding will be replaced automatically when building, no need to manually change
+var Version = "v1.1.0"            // this hard coding will be replaced automatically when building, no need to manually change
 
 type ModelInfo struct {
 	Model string
@@ -17,6 +17,14 @@ var ModelRegistry = map[string]ModelInfo{
 	"ideogram-v2":          {"ideogram-v2", "1e678939-395d-4921-b6ce-d4be3d2e72c4"},
 	"stable-diffusion-3.5": {"stable-diffusion-3.5", "9f382632-43b1-41a4-b85f-9a599ea3caf5"},
 	"stable-diffusion-xl":  {"stable-diffusion-xl", "9fa7e69d-ee00-471c-bb9b-2f553588325a"},
+}
+
+var ImageModelList = []string{
+	"dall-e-3",
+	"flux-pro",
+	"ideogram-v2",
+	"stable-diffusion-3.5",
+	"stable-diffusion-xl",
 }
 
 // 通过 model 名称查询的方法
