@@ -154,7 +154,7 @@ Render 可以直接部署 docker 镜像,不需要 fork 仓库：[Render](https:/
 2. 打开**F12**开发者工具。
 3. 发起对话。
 4. `member`接口中`id`即是对话id,可将其配置为环境变量`IMAGE_CHAT_ID`,
-   `createdBy`即是用户id,配置为环境变量`BB_COOKIE`
+   `createdBy`即是用户id,配置为环境变量`USER_ID`
   ![img.png](docs/img.png)
 5. `member`接口中`header`中的`Cookie`即环境变量`BB_COOKIE`的值(较为关键的是图中蓝色高亮的内容)。
   ![img.png](docs/img_1.png)
